@@ -9,3 +9,6 @@ __pycache__/
 analyzer
 analyzer.exe
 *.o
+
+# 4.忽略本地生成的聊天历史记录
+history.json
