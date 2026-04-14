@@ -1,0 +1,11 @@
+# 1. 不上传作者的环境配置和密码
+.env
+
+# 2. 忽略 Python 运行时产生的垃圾缓存文件
+__pycache__/
+*.pyc
+
+# 3. 忽略 C++ 编译生成的二进制文件
+analyzer
+analyzer.exe
+*.o
