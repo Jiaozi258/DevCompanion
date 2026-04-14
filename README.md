@@ -1,5 +1,4 @@
-DevCompanion: 一款用于对代码进行分析和debug的开源软件
-
+DevCompanion: 一款用于对代码进行分析和debug的开源项目
 
 
 DevCompanion 是一个采用Python + C+++ LLM混合架构的极简代码审查工具。
