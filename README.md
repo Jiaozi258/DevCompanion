@@ -30,9 +30,7 @@ DevCompanion: 一款用于对代码进行分析和找bug的开源项目，是一
 ```bash
 \#输入下面一行指令
 pyinstaller DevCompanion.spec
-编译完成后，请将 dist/DevCompanion_Pro.exe、.env 文件以及空文件夹 knowledge_db/ 打包放在同一个目录下运行。
-
-```bash
+编译完成后，请将 dist/DevCompanion.exe、.env 文件以及空文件夹 knowledge_db/ 打包放在同一个目录下运行。
 
 \# 克隆仓库
 
