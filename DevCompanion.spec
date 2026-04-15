@@ -7,16 +7,21 @@ a = Analysis(
     datas=[
         ('startup.gif', '.'),   # 启动动画
         ('analyzer.exe', '.')   # C++ 引擎
+        ('app.ico', '.')
     ],
     hiddenimports=[
         'chromadb',
         'chromadb.telemetry.product.posthog',
         'chromadb.api.segment',
+        'chromadb.api.rust',
+        'chromadb.api.fastapi',
         'sqlite3',
         'onnxruntime',
         'pydantic',
         'requests',
-        'dotenv'
+        'dotenv',
+        'tokenizers',   
+        'tqdm'      
     ],
     hookspath=[],
     hooksconfig={},
@@ -37,7 +42,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False, # 设置为 False，消除黑框
+    console=True, # 设置为 False，消除黑框
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

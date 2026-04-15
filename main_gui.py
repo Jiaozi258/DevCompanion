@@ -1,4 +1,5 @@
 import sys
+import requests
 import os
 import subprocess
 import requests
@@ -10,21 +11,23 @@ from dotenv import load_dotenv
 from PyQt6.QtWidgets import QStackedWidget, QListWidget
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QComboBox, QTextEdit, QPushButton, QProgressBar, QFileDialog, QMessageBox)
-from PyQt6.QtGui import QMovie
+from PyQt6.QtGui import QIcon,QMovie
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 
 load_dotenv()
 
 def fetch_ollama_models():
-    """ 动态获取本地 Ollama 已安装的模型列表 """
+    """ 动态获取当前电脑 Ollama 已安装的模型列表 """
     try:
-        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        # 向本地 Ollama 发送查询请求
+        response = requests.get("http://localhost:11434/api/tags", timeout=0.5)
         if response.status_code == 200:
             models = response.json().get('models', [])
             return [m['name'] for m in models]
-    except:
+    except Exception:
+        # 如果用户没开 Ollama，或者没安装，就静默失败
         pass
-    return ["qwen2.5:7b"] # 如果连不上，返回一个默认模型
+    return []
 
 # ==========================================
 # 工具函数：处理打包后的路径问题
@@ -82,13 +85,14 @@ class RAGManager:
 class WorkerThread(QThread):
     result_ready = pyqtSignal(str)
 
-    def __init__(self, code, task, engine, rag_manager, api_key):
+    def __init__(self, code, task, engine, rag_manager, api_key,api_url):
         super().__init__()
         self.code = code
         self.task = task
         self.engine = engine
         self.rag_mgr = rag_manager
-        self.api_key = api_key # 存进自己的口袋
+        self.api_key = api_key 
+        self.api_url = api_url
 
     def run(self):
         # 1. C++ 底层扫描
@@ -102,8 +106,8 @@ class WorkerThread(QThread):
         if context:
             enhanced_prompt = f"【参考本地资料】：{context}\n\n【待处理代码/问题】：\n{self.code}"
 
-        # 4. 呼叫大模型 (带上自己的 api_key)
-        llm_result = self.call_llm(enhanced_prompt, self.task, self.engine, self.api_key)
+        # 4. 呼叫大模型 
+        llm_result = self.call_llm(enhanced_prompt, self.task, self.engine, self.api_key,self.api_url)
 
         final_text = f"【C++ 分析】\n{cpp_result}\n\n{'='*40}\n\n【AI 解析】\n{llm_result}"
         if context:
@@ -112,46 +116,75 @@ class WorkerThread(QThread):
         self.result_ready.emit(final_text)
 
     def call_cpp_engine(self, text_data):
+        import subprocess
         exe_path = get_resource_path("analyzer.exe")
         try:
             process = subprocess.run([exe_path], input=text_data.encode('utf-8'), capture_output=True, timeout=5)
             return process.stdout.decode('utf-8')
         except Exception as e:
-            return f"C++ 引擎异常: {e}"
+            return f"C++ 引擎调用异常: {e}"
 
-    # 【修改】：接收 api_key 并进行验证
-    def call_llm(self, user_input, task_type, mode, api_key):
+    def call_llm(self, user_input, task_type, mode, api_key,api_url):
+        import requests
         system_prompts = {
-            "解释代码": "你是一个资深的 C++ 专家，请结合参考资料逐行详细严谨通俗地解释代码。",
-            "寻找Bug": "你是一个严厉的代码审查员，请结合参考资料找出所有漏洞。"
+            "解释代码": "你是一个资深的 C++ 专家，请结合参考资料逐行地通俗易懂地严谨认真地解释代码。",
+            "寻找Bug": "你是一个严厉的代码审查员，请结合参考资料找出逻辑漏洞和语法漏洞并对其进行改正。",
+            "代码思路分析": "你是一个架构师。请不要直接提供修改后的代码，而是帮我梳理这段代码的设计模式、时间复杂度，并用步骤拆解它的核心逻辑。",
+            "举一反三": "你是一个资深导师。请指出这段 C++ 代码中不够优雅的地方，提供至少两种不同的重构思路（比如一种追求极致性能，一种追求可读性），并引导我思考。"
         }
         
-        if "本地隐私模式" in mode or ":" in mode:
-            api_url = "http://localhost:11434/api/chat"
-            headers = {}
-            data = {
-                "model": "deepseek-coder:1.3b",
-                "messages": [{"role": "system", "content": system_prompts.get(task_type)}, {"role": "user", "content": user_input}],
-                "stream": False
-            }
-        else:
-            api_url = "https://api.deepseek.com/v1/chat/completions" 
-            # 严格拦截：如果没有 KEY，直接报错退回
+        request_url = ""
+        headers={}
+        data={}
+
+        #选了这个走云端
+        if mode == "云端模式 ":
+            request_url = api_url
             if not api_key: 
-                return "缺少 API Key！请去左侧【基础设置】页面填写您的密钥喵！"
+                return " 缺少 API Key！请去左侧【基础设置】页面填写您的密钥喵！"
                 
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             data = {"model": "deepseek-chat", "messages": [{"role": "system", "content": system_prompts.get(task_type)}, {"role": "user", "content": user_input}]}
+        else:
+            # 只要不是云端，全部给本地 Ollama
+            request_url = "http://localhost:11434/api/chat"
+            headers = {}
+            
+            #确保系统提示词绝对不是 None
+            sys_prompt = system_prompts.get(task_type, "你是一个严谨的代码分析助手。")
+            
+            data = {
+                "model": mode, 
+                "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_input}],
+                "stream": False
+            }
         
+        # 开始尝试发送请求
         try:
-            response = requests.post(api_url, headers=headers, json=data, timeout=120)
-            response.raise_for_status() 
-            if "本地" in mode or ":" in mode:
-                return response.json().get('message', {}).get('content', '本地模型返回为空')
-            else:
+            if not request_url:
+                return "内部错误：未获取到请求地址！"
+
+            response = requests.post(request_url, headers=headers, json=data, timeout=120)
+            
+            # 拦截错误
+            if response.status_code != 200:
+                error_detail = response.text  # 抓取 API 吐出的具体错误原话
+                
+                if response.status_code == 400:
+                    return f"🚨 请求格式错误 (400)。\n {error_detail}\n(排查建议：检查下拉框模型名是否正确，或重启 Ollama)"
+                elif response.status_code == 402:
+                    return "🚨 云端请求失败：账户余额不足 (402)。请更换 API 或切至本地模型。"
+                else:
+                    return f"🚨 请求失败 (状态码 {response.status_code}): {error_detail}"
+                
+            # 如果是 200 正常响应，才往下解析
+            if mode == "云端极速模式 (DeepSeek API)":
                 return response.json().get('choices', [{}])[0].get('message', {}).get('content', 'API 返回为空')
+            else:
+                return response.json().get('message', {}).get('content', '本地模型返回为空')
+                
         except Exception as e:
-            return f"请求异常: {e}"
+            return f"🚨 请求引发异常: {e}"
 
 # ==========================================
 # 3. 启动屏类
@@ -181,7 +214,8 @@ class DevCompanionWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("DevCompanion V1.4 - Pro")
         self.resize(1100, 750)
-    
+        self.rag_mgr = RAGManager()   
+
     # 核心：总容器是一个水平布局
         main_layout = QHBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -227,7 +261,7 @@ class DevCompanionWindow(QMainWindow):
         
         # 任务选择
         self.task_combo = QComboBox()
-        self.task_combo.addItems(["解释代码", "寻找Bug"])
+        self.task_combo.addItems(["解释代码", "寻找Bug","代码思路分析","举一反三"])
         layout.addWidget(QLabel("选择任务："))
         layout.addWidget(self.task_combo)
 
@@ -326,9 +360,16 @@ class DevCompanionWindow(QMainWindow):
         # 推理引擎选择
         self.engine_combo = QComboBox()
         ollama_models = fetch_ollama_models()
-        # 把云端和本地发现的所有模型都塞进去
         self.engine_combo.addItems(["云端模式"])
-        self.engine_combo.addItems(["本地模式"]) 
+        # 扫描当前用户的电脑
+        local_models = fetch_ollama_models()
+        
+        if local_models:
+            # 如果扫描到了，把电脑里的模型全塞进下拉框
+            self.engine_combo.addItems(local_models)
+        else:
+            # 如果没扫描到，给个不可选提示
+            self.engine_combo.addItem("未检测到本地模型 (请先开启 Ollama)")
         layout.addWidget(QLabel("选择算力引擎："))
         layout.addWidget(self.engine_combo)
 
@@ -360,9 +401,13 @@ class DevCompanionWindow(QMainWindow):
     def on_submit_clicked(self):
         code = self.input_text.toPlainText()
         task = self.task_combo.currentText()
-        
         # 去设置页面抓取数据
         engine = self.engine_combo.currentText()
+        # 获取用户填写的自定义 URL，没填就默认用 DeepSeek
+        base_url = self.api_url_input.toPlainText().strip() or "https://api.deepseek.com/v1/chat/completions"
+        # 补全 OpenAI 协议的后缀路径
+        if not base_url.endswith("/chat/completions"):
+            base_url = base_url.rstrip("/") + "/chat/completions"
         # 优先读取界面上填的，如果没填，再去读 .env 文件里的 LLM_API_KEY
         api_key = self.api_key_display.toPlainText().strip() or os.getenv("LLM_API_KEY", "")
 
@@ -375,7 +420,7 @@ class DevCompanionWindow(QMainWindow):
         self.output_text.setText("正在后台拉取数据喵...")
         
         # 把 api_key 当作参数，塞给后台
-        self.worker = WorkerThread(code, task, engine, self.rag_mgr, api_key)
+        self.worker = WorkerThread(code, task, engine, self.rag_mgr, api_key,base_url)
         self.worker.result_ready.connect(self.update_ui)
         self.worker.start()
 
@@ -418,7 +463,20 @@ class DevCompanionWindow(QMainWindow):
 # 5. 启动
 # ==========================================
 if __name__ == "__main__":
-    app = QApplication(sys.argv) 
+    # 告诉 Windows 这是一个独立的软件，不要用 Python 的默认图标
+    import ctypes
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("my_unique_dev_companion_v1")
+    except Exception:
+        pass
+
+    app = QApplication(sys.argv)
+    
+    # 给整个应用程序设置图标
+    icon_path = get_resource_path("app.ico")
+    app.setWindowIcon(QIcon(icon_path))
+
+
     app.setStyleSheet("""
         QListWidget {
             background-color: #2b2b2b;
@@ -450,7 +508,6 @@ if __name__ == "__main__":
 
     window = DevCompanionWindow()
 
-    # 3 秒后关闭动画，显示主窗口
     QTimer.singleShot(3000, splash.close)
     QTimer.singleShot(3000, window.show)
 
