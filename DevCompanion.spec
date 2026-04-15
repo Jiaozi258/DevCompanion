@@ -6,7 +6,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('startup.gif', '.'),   # 启动动画
-        ('analyzer.exe', '.')   # C++ 引擎
+        ('analyzer.exe', '.'),   # C++ 引擎
         ('app.ico', '.')
     ],
     hiddenimports=[
